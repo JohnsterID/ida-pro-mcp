@@ -387,3 +387,41 @@ refinement work.
 Future work on C++ recovery should be scoped as one composite tool, not a
 suite of low-level primitives. The generic "guardrails for dumb LLMs"
 suggestions belong in the client/agent layer, not the MCP server.
+
+---
+
+## Appendix: Multi-Version Test Results
+
+Full test suite run against all supported IDA versions (2026-04-06):
+
+```
+IDA 9.0sp1  crackme03.elf:       247 passed
+IDA 9.0sp1  typed_fixture.elf:   243 passed, 1 skipped
+IDA 9.1     crackme03.elf:       247 passed
+IDA 9.1     typed_fixture.elf:   243 passed, 1 skipped
+IDA 9.2     crackme03.elf:       247 passed
+IDA 9.2     typed_fixture.elf:   243 passed, 1 skipped
+IDA 9.3     crackme03.elf:       247 passed
+IDA 9.3     typed_fixture.elf:   243 passed, 1 skipped
+```
+
+8/8 runs pass. The existing API surface is stable across IDA 9.0 SP1 through
+9.3. The 1 skipped test per typed_fixture run is expected (Hex-Rays version
+guard).
+
+## Appendix: C++ Test Fixture Availability
+
+The `rebin` project testapp provides binaries for C++ recovery validation:
+
+| Compiler | Arch | Debug | Release | Stripped | NoRTTI | Stripped+NoRTTI |
+|---|---|---|---|---|---|---|
+| GCC (Linux) | x86-64 ELF | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Clang (Linux) | x86-64 ELF | ✅ | ✅ | — | — | — |
+| Clang (macOS) | x86-64 Mach-O | ✅ | ✅ | — | — | — |
+| MinGW | x86-64 PE | ✅ | ✅ | ✅ | — | — |
+| MSVC v143 | i386 PE | ✅ | ✅ | — | — | — |
+| MSVC v90 | i386 PE | ✅ | ✅ | — | — | — |
+
+Source code with ground-truth class hierarchy: `rebin/testapp/src/`
+(Greeter → AbstractGreeter → FormalGreeter/CasualGreeter/ConcreteGreeter
+with single, multiple, and virtual inheritance, pure virtuals, templates).
