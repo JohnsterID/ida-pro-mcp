@@ -48,12 +48,13 @@ python3 test_llm_mcp.py --list-models                    # check available model
 ```
 
 ### LM Studio API Notes
+- Model load accepts `context_length` (confirmed 2026-04-11 — test_llm_mcp uses it)
+- Model load does NOT accept `gpu_offload` — use LM Studio UI for GPU layer config
 - Model unload requires `instance_id` (not `model`) field
-- Model load does NOT accept `gpu_offload` param — use LM Studio UI
 - `/v1/chat/completions` (OAI-compat) is more reliable for tool use than native MCP
 - Native MCP via `/api/v1/chat` `integrations` key works but crashes with Gemma 4
 - `kv_unified=true` for all models — `n_parallel` does NOT multiply KV cache
-- Reducing `n_parallel` from 4→1 may slightly improve single-user latency
+- `usage.completion_tokens_details.reasoning_tokens` tracks thinking overhead
 
 ### LLM Model Rankings (v3 final — 2026-04-08)
 
