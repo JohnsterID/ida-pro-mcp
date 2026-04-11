@@ -50,7 +50,7 @@ DEFAULT_MAX_TOKENS = 4096
 #   glm    65K: 17063 wt + 3384 KV + 401 compute = 20848 (3712 free) ✅
 #   devstr 61K: 13302 wt + 9600 KV + 344 compute = 23246 (1314 free) ✅
 #   qwen   94K: 15871 wt + 1840 KV + 497 compute = 18208 (6352 free) ✅
-#   nemo  131K:  2429 wt + 2048 KV + 407 compute =  4884 (19676 free) ✅
+#   nemo  auto:   2429 wt + 7632 KV + 1454 compute = 11515 (13045 free) ✅
 #   lfm2  128K: 13745 wt + 2500 KV + 391 compute = 16636 (7924 free) ✅
 MODEL_CONFIGS = {
     "gemma-4": {
@@ -66,7 +66,7 @@ MODEL_CONFIGS = {
         "context_length": 94208,   # auto=4096 too low; 33/41 layers, 368 MiB KV on CPU
     },
     "nemotron": {
-        "context_length": 131072,  # auto=488K wastes VRAM; 131K sufficient
+        # auto=488K; no speed penalty with flash_attention (94 vs 100 tok/s)
     },
     "lfm2": {
         "context_length": 128000,  # model's max_context_length cap
