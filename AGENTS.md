@@ -81,7 +81,8 @@ Compute buffer with flash OFF vs ON (nemotron 131K ctx):
 | nemotron 131K | 43/43 | 2429 | 2048 | - | 407 | 4884 | 19676 ✅ |
 | lfm2 128K | 41/41 | 13745 | 2500 | - | 391 | 16636 | 7924 ✅ |
 
-All values in MiB. Devstral at 61K is tightest (1314 free) but tested working.
+All values in MiB. After GPU offload tuning, auto context matches forced
+for all models except Qwen3.5 (auto still 4096, must force 94208).
 
 ### Other LM Studio Notes
 - Model unload requires `instance_id` (not `model`) field
