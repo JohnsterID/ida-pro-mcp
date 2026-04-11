@@ -7,7 +7,7 @@ Usage:
     IDADIR=/opt/ida-pro-9.3 TVHEADLESS=1 uv run idalib-mcp --port 8745 tests/crackme03.elf &
 
     # Single prompt:
-    python3 test_llm_mcp.py --model devstral "Decompile the main function"
+    python3 test_llm_mcp.py -m devstral "Decompile the main function"
 
     # Matrix test (all models × all prompts):
     python3 test_llm_mcp.py --matrix
@@ -31,6 +31,45 @@ MCP_BASE = "http://127.0.0.1:8745"
 MAX_TURNS = 10
 DEFAULT_MAX_TOKENS = 4096
 
+# Per-model optimal settings from VRAM budget calculations (24 GB RX 7900 XTX).
+# context_length: 90% of theoretical max to stay safely GPU-only.
+# See AGENTS.md "Optimal LM Studio Settings" for derivation.
+MODEL_CONFIGS = {
+    "gemma-4": {
+        "context_length": 58368,
+        "note": "🏆 Best quality. ISWA dual-cache. Slow first prompt (~13 tok/s), needs warmup.",
+    },
+    "glm-4.7": {
+        "context_length": 65536,
+        "note": "Fastest reliable (55 tok/s). 47/48 layers on GPU.",
+    },
+    "devstral": {
+        "context_length": 61440,
+        "note": "Solid all-round. Strict Jinja role alternation.",
+    },
+    "qwen3.5": {
+        "context_length": 94208,
+        "note": "⚠️ 8/41 layers spill to CPU (4.3 GB). Slow.",
+    },
+    "nemotron": {
+        "context_length": 131072,
+        "note": "Tiny (4B). 131K sweet spot — 233K is slower with no benefit for short tasks.",
+    },
+    "lfm2": {
+        "context_length": 114688,
+        "note": "❌ Broken multi-tool selection. Gets worse with more context.",
+    },
+}
+
+
+def _model_config(model_id: str) -> dict:
+    """Look up MODEL_CONFIGS entry by partial key match against a full model id."""
+    model_lower = model_id.lower()
+    for key, cfg in MODEL_CONFIGS.items():
+        if key in model_lower:
+            return cfg
+    return {}
+
 
 # ---------------------------------------------------------------------------
 # LM Studio helpers
@@ -41,14 +80,23 @@ def lms_get_models():
     return [m for m in data.get("models", []) if m.get("type") == "llm"]
 
 
-def lms_load_model(model_id: str):
-    """Load a model; returns instance info."""
-    return _json_post(f"{LMSTUDIO_BASE}/api/v1/models/load", {"model": model_id})
+def lms_load_model(model_id: str, context_length: int | None = None):
+    """Load a model with optional context_length; returns instance info."""
+    payload = {"model": model_id}
+    ctx = context_length or _model_config(model_id).get("context_length")
+    if ctx:
+        payload["context_length"] = ctx
+    return _json_post(f"{LMSTUDIO_BASE}/api/v1/models/load", payload)
 
 
 def lms_unload_model(instance_id: str):
     """Unload a model instance."""
     return _json_post(f"{LMSTUDIO_BASE}/api/v1/models/unload", {"instance_id": instance_id})
+
+
+def lms_warmup(model_id: str):
+    """Send a trivial chat to warm up KV caches (important for Gemma 4 ISWA)."""
+    lms_chat(model_id, [{"role": "user", "content": "hi"}], max_tokens=1)
 
 
 def lms_chat(model_id: str, messages: list[dict], tools: list[dict] | None = None,
@@ -121,6 +169,17 @@ def mcp_call_tool(name: str, arguments: dict) -> str:
 # ---------------------------------------------------------------------------
 # Core agent loop
 # ---------------------------------------------------------------------------
+def _extract_usage(resp: dict) -> dict:
+    """Pull token counts and compute tok/s from a chat completion response."""
+    usage = resp.get("usage", {})
+    details = usage.get("completion_tokens_details", {})
+    return {
+        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "completion_tokens": usage.get("completion_tokens", 0),
+        "reasoning_tokens": details.get("reasoning_tokens", 0),
+    }
+
+
 def run_agent(model_id: str, prompt: str, tools: list[dict],
               max_turns: int = MAX_TURNS, verbose: bool = True) -> dict:
     """Run an agentic loop: prompt → tool calls → results → final answer."""
@@ -135,6 +194,8 @@ def run_agent(model_id: str, prompt: str, tools: list[dict],
     ]
 
     tool_calls_log = []
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "reasoning_tokens": 0}
+    truncated = False
     start = time.time()
 
     for turn in range(max_turns):
@@ -147,12 +208,27 @@ def run_agent(model_id: str, prompt: str, tools: list[dict],
                 "turns": turn + 1,
                 "elapsed": time.time() - start,
                 "tool_calls": tool_calls_log,
+                "usage": total_usage,
+                "truncated": truncated,
                 "answer": None,
             }
+
+        # Accumulate token usage across turns
+        turn_usage = _extract_usage(resp)
+        for k in total_usage:
+            total_usage[k] += turn_usage[k]
 
         choice = resp.get("choices", [{}])[0]
         msg = choice.get("message", {})
         finish = choice.get("finish_reason", "")
+
+        if finish == "length":
+            truncated = True
+            if verbose:
+                ratio = turn_usage["reasoning_tokens"] / max(turn_usage["completion_tokens"], 1)
+                print(f"    ⚠ finish_reason=length (reasoning used "
+                      f"{turn_usage['reasoning_tokens']}/{turn_usage['completion_tokens']} "
+                      f"completion tokens = {ratio:.0%})")
 
         # Append assistant message to history
         messages.append(msg)
@@ -188,22 +264,32 @@ def run_agent(model_id: str, prompt: str, tools: list[dict],
 
         # No tool calls → final answer
         content = msg.get("content", "") or ""
-        reasoning = msg.get("reasoning_content", "")
+
+        elapsed = time.time() - start
+        tok_s = total_usage["completion_tokens"] / elapsed if elapsed > 0 else 0
 
         return {
             "status": "ok",
             "turns": turn + 1,
-            "elapsed": time.time() - start,
+            "elapsed": elapsed,
+            "tok_s": round(tok_s, 1),
             "tool_calls": tool_calls_log,
+            "usage": total_usage,
+            "truncated": truncated,
             "answer": content,
-            "reasoning_len": len(reasoning) if reasoning else 0,
         }
+
+    elapsed = time.time() - start
+    tok_s = total_usage["completion_tokens"] / elapsed if elapsed > 0 else 0
 
     return {
         "status": "max_turns",
         "turns": max_turns,
-        "elapsed": time.time() - start,
+        "elapsed": elapsed,
+        "tok_s": round(tok_s, 1),
         "tool_calls": tool_calls_log,
+        "usage": total_usage,
+        "truncated": truncated,
         "answer": None,
     }
 
@@ -249,12 +335,24 @@ def run_matrix(models: list[str], prompts: dict[str, str], tools: list[dict],
             print(f"  ⚠ Model '{model_partial}' not found, skipping")
             continue
 
-        # Load model
+        cfg = _model_config(model_id)
+
+        # Load model with optimal context_length
         print(f"\n{'='*60}")
         print(f"Loading: {model_id}")
+        if cfg.get("context_length"):
+            print(f"  context_length={cfg['context_length']}")
+        if cfg.get("note"):
+            print(f"  {cfg['note']}")
         load_resp = lms_load_model(model_id)
         instance_id = load_resp.get("instance_id", model_id)
         print(f"  Loaded in {load_resp.get('load_time_seconds', '?')}s")
+
+        # Warmup KV caches
+        print("  Warming up...", end="", flush=True)
+        t0 = time.time()
+        lms_warmup(model_id)
+        print(f" {time.time()-t0:.1f}s")
 
         for prompt_key, prompt_text in prompts.items():
             print(f"\n  [{model_id}] {prompt_key}:")
@@ -265,10 +363,15 @@ def run_matrix(models: list[str], prompts: dict[str, str], tools: list[dict],
 
             status_icon = {"ok": "✅", "max_turns": "⚠️", "error": "❌"}.get(result["status"], "?")
             tc_summary = ", ".join(tc["name"] for tc in result["tool_calls"])
+            usage = result.get("usage", {})
+            trunc = " TRUNCATED" if result.get("truncated") else ""
             print(f"  {status_icon} status={result['status']} "
                   f"turns={result['turns']} "
-                  f"elapsed={result['elapsed']:.1f}s "
-                  f"tools=[{tc_summary}]")
+                  f"{result['elapsed']:.1f}s "
+                  f"{result.get('tok_s', 0)} tok/s "
+                  f"(comp={usage.get('completion_tokens',0)} "
+                  f"reason={usage.get('reasoning_tokens',0)}){trunc}")
+            print(f"  tools=[{tc_summary}]")
             if result["answer"]:
                 print(f"  answer: {result['answer'][:200]}...")
 
@@ -322,23 +425,32 @@ def main():
                         help=f"Max agent turns (default: {MAX_TURNS})")
     parser.add_argument("--mcp-port", type=int, default=8745,
                         help="MCP server port (default: 8745)")
+    parser.add_argument("--lmstudio", default=None,
+                        help="LM Studio base URL (default: %(default)s)")
     parser.add_argument("--quiet", "-q", action="store_true",
                         help="Less verbose output")
     parser.add_argument("--output", "-o", help="Save results to JSON file")
     args = parser.parse_args()
 
-    global MCP_BASE
+    global MCP_BASE, LMSTUDIO_BASE
     MCP_BASE = f"http://127.0.0.1:{args.mcp_port}"
+    if args.lmstudio:
+        LMSTUDIO_BASE = args.lmstudio.rstrip("/")
 
     if args.list_models:
         models = lms_get_models()
-        print(f"Available LLM models ({len(models)}):")
+        print(f"Available LLM models ({len(models)}) at {LMSTUDIO_BASE}:")
         for m in models:
             loaded = len(m.get("loaded_instances", []))
-            caps = m.get("capabilities", {})
-            print(f"  {m['key']:40s}  {m.get('params_string','?'):10s}  "
-                  f"tool_use={caps.get('trained_for_tool_use', False)}  "
-                  f"loaded={loaded}")
+            key = m["key"]
+            cfg = _model_config(key)
+            ctx = cfg.get("context_length", "")
+            ctx_str = f"ctx={ctx}" if ctx else ""
+            note = cfg.get("note", "")
+            print(f"  {key:50s}  {m.get('params_string','?'):10s}  "
+                  f"loaded={loaded}  {ctx_str}")
+            if note:
+                print(f"    {note}")
         return
 
     if args.list_tools:
@@ -364,7 +476,8 @@ def main():
         sys.exit(1)
 
     if args.matrix:
-        all_models = ["devstral", "glm-4.7", "gemma-4", "nemotron", "lfm2", "qwen3.5"]
+        # Ranked order from v3 testing (best → worst)
+        all_models = ["gemma-4", "glm-4.7", "devstral", "qwen3.5", "nemotron", "lfm2"]
         results = run_matrix(all_models, TEST_PROMPTS, tools,
                              verbose=not args.quiet)
         if args.output:
@@ -373,13 +486,15 @@ def main():
             print(f"\nResults saved to {args.output}")
 
         # Summary table
-        print(f"\n{'='*70}")
+        print(f"\n{'='*80}")
         print("SUMMARY")
-        print(f"{'='*70}")
+        print(f"{'='*80}")
         for r in results:
             icon = {"ok": "✅", "max_turns": "⚠️", "error": "❌"}.get(r["status"], "?")
-            print(f"  {icon} {r['model']:35s} {r['prompt_key']:20s} "
-                  f"turns={r['turns']} {r['elapsed']:.1f}s")
+            trunc = " TRUNC" if r.get("truncated") else ""
+            print(f"  {icon} {r['model']:40s} {r['prompt_key']:20s} "
+                  f"turns={r['turns']} {r['elapsed']:5.1f}s "
+                  f"{r.get('tok_s', 0):5.1f} tok/s{trunc}")
         return
 
     # Single prompt mode
@@ -387,7 +502,7 @@ def main():
         parser.print_help()
         print("\nExample prompts:")
         for k, v in TEST_PROMPTS.items():
-            print(f"  --prompt-key {k}: {v[:80]}")
+            print(f"  {k}: {v[:80]}")
         return
 
     available = lms_get_models()
@@ -398,18 +513,31 @@ def main():
             print(f"  {m['key']}")
         sys.exit(1)
 
+    cfg = _model_config(model_id)
     print(f"Loading {model_id}...")
+    if cfg.get("context_length"):
+        print(f"  context_length={cfg['context_length']}")
     load_resp = lms_load_model(model_id)
     instance_id = load_resp.get("instance_id", model_id)
     print(f"  Loaded in {load_resp.get('load_time_seconds', '?')}s")
+
+    # Warmup
+    print("  Warming up...", end="", flush=True)
+    t0 = time.time()
+    lms_warmup(model_id)
+    print(f" {time.time()-t0:.1f}s")
 
     print(f"\n[{model_id}] {args.prompt[:80]}...")
     result = run_agent(model_id, args.prompt, tools,
                        max_turns=args.max_turns, verbose=not args.quiet)
 
     icon = {"ok": "✅", "max_turns": "⚠️", "error": "❌"}.get(result["status"], "?")
+    usage = result.get("usage", {})
+    trunc = " TRUNCATED" if result.get("truncated") else ""
     print(f"\n{icon} status={result['status']} turns={result['turns']} "
-          f"elapsed={result['elapsed']:.1f}s")
+          f"{result['elapsed']:.1f}s {result.get('tok_s', 0)} tok/s "
+          f"(comp={usage.get('completion_tokens',0)} "
+          f"reason={usage.get('reasoning_tokens',0)}){trunc}")
     if result.get("answer"):
         print(f"\nAnswer:\n{result['answer']}")
     if result.get("error"):
