@@ -47,27 +47,48 @@ python3 test_llm_mcp.py --mcp-port 8011 -m devstral "Decompile main"  # single t
 python3 test_llm_mcp.py --list-models                    # check available models
 ```
 
-### LM Studio API Notes
-- Model load accepts `context_length` (confirmed 2026-04-11 — test_llm_mcp uses it)
-- Model load does NOT accept `gpu_offload` — use LM Studio UI for GPU layer config
+### LM Studio Load API Parameters (confirmed 2026-04-11)
+```
+context_length      — max tokens (auto-calculates from VRAM if omitted)
+flash_attention     — DEFAULTS TO FALSE, must explicitly set true
+echo_load_config    — returns actual applied config in response
+num_experts         — MoE expert count
+offload_kv_cache_to_gpu — defaults true
+eval_batch_size     — defaults 512
+```
+`gpu_offload` (layer count) is NOT an API parameter — set in LM Studio UI.
+
+### LM Studio Auto Context vs Forced (24 GB RX 7900 XTX)
+| Model | Auto ctx | Forced ctx | Why |
+|---|---|---|---|
+| gemma-4 26B | 58368 | 58368 | Matches — fits fully on GPU |
+| glm-4.7 30B | 4096 | 65536 | Auto too low — weights fill VRAM |
+| devstral 24B | 35914 | 61440 | Forced gives more headroom |
+| qwen3.5 35B | 4096 | 94208 | Auto too low — 8/41 layers on CPU |
+| nemotron 4B | 488357 | 131072 | Auto wastes KV VRAM; 131K sufficient |
+| lfm2 24B | 128000 | 128000 | Model cap |
+
+### Other LM Studio Notes
 - Model unload requires `instance_id` (not `model`) field
 - `/v1/chat/completions` (OAI-compat) is more reliable for tool use than native MCP
 - Native MCP via `/api/v1/chat` `integrations` key works but crashes with Gemma 4
 - `kv_unified=true` for all models — `n_parallel` does NOT multiply KV cache
 - `usage.completion_tokens_details.reasoning_tokens` tracks thinking overhead
 
-### LLM Model Rankings (v3 final — 2026-04-08)
+### LLM Model Rankings (v3 — 2026-04-08, flash_attention was OFF)
 
-Three test iterations (v1→v2→v3) with bug fixes between each confirmed stable rankings:
+**⚠️ Speed numbers below were measured WITHOUT flash_attention.** Gemma 4 measured
+76 tok/s with flash_attention=true (2026-04-11) vs 12 tok/s without. All models
+need re-benchmarking with flash_attention=true.
 
-| Rank | Model | Params | Context | Score | tok/s | Verdict |
-|---|---|---|---|---|---|---|
-| 🏆1 | gemma-4-26b-a4b | 26B-A4B | 58K | 500/500 100% | 12 | Only perfect scorer |
-| 2 | glm-4.7-flash | 30B | 65K | 430/500 86% | 55 | Fastest reliable |
-| 3 | devstral-small-2 | 24B | 61K | 430/500 86% | 9.5 | Solid all-round |
-| 4 | qwen3.5-35b-a3b | 35B-A3B | 94K | 430/500 86% | 16 | VRAM-constrained |
-| 5 | nemotron-3-nano-4b | 4B | 131K | 400/500 80% | 55 | Quick tasks only |
-| 6 | lfm2-24b-a2b | 64x1.3B | 112K | 330/500 66% | 60 | AVOID |
+| Rank | Model | Params | Context | Score | tok/s (no FA) |
+|---|---|---|---|---|---|
+| 1 | gemma-4-26b-a4b | 26B-A4B | 58K | 500/500 100% | 12 (76 w/ FA) |
+| 2 | glm-4.7-flash | 30B | 65K | 430/500 86% | 55 |
+| 3 | devstral-small-2 | 24B | 61K | 430/500 86% | 9.5 |
+| 4 | qwen3.5-35b-a3b | 35B-A3B | 94K | 430/500 86% | 16 |
+| 5 | nemotron-3-nano-4b | 4B | 131K | 400/500 80% | 55 |
+| 6 | lfm2-24b-a2b | 64x1.3B | 128K | 330/500 66% | 60 |
 
 ### Per-Test Breakdown
 
@@ -118,29 +139,21 @@ All with: CPU Thread Pool = 7, Flash Attention = ON
 
 ### OpenHands Configuration
 
-**Primary (Gemma 4 — best quality):**
+**Primary (Gemma 4 — only model with 100% autonomous error recovery):**
 ```
 Custom Model:  openai/google/gemma-4-26b-a4b
 Base URL:      http://192.168.0.241:1234/v1
 API Key:       lmstudio
 ```
-12 tok/s but only model with autonomous error recovery.
-Slow first prompt (~13 tok/s) due to ISWA cache warmup — send a trivial
-"hello" after loading to warm up before real work.
+76 tok/s with flash_attention=true (was 12 without — test_llm_mcp now sends it).
 
-**Speed alt (GLM 4.7 Flash — interactive use):**
+**Speed alt (GLM 4.7 Flash):**
 ```
 Custom Model:  openai/zai-org/glm-4.7-flash
 Base URL:      http://192.168.0.241:1234/v1
 API Key:       lmstudio
 ```
-55 tok/s, 4.5x faster. Use when watching the session and can nudge on errors.
-
-### Speed vs Accuracy Tradeoff
-- **Gemma 4 (100%, 12 tok/s):** Complex tasks, error-heavy workflows, unattended
-- **GLM 4.7 (86%, 55 tok/s):** Speed-sensitive, straightforward, supervised
-- **Devstral (86%, 9.5 tok/s):** Reliable tool calling, coding focus
-- **Nemotron 4B (80%, 55 tok/s):** Trivial one-shot tasks only
+~61 tok/s (needs re-bench with flash_attention). Weak on autonomous error recovery.
 
 ### VRAM Budget Reference (24 GB RX 7900 XTX)
 

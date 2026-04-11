@@ -31,33 +31,33 @@ MCP_BASE = "http://127.0.0.1:8745"
 MAX_TURNS = 10
 DEFAULT_MAX_TOKENS = 4096
 
-# Per-model optimal settings from VRAM budget calculations (24 GB RX 7900 XTX).
-# context_length: 90% of theoretical max to stay safely GPU-only.
-# See AGENTS.md "Optimal LM Studio Settings" for derivation.
+# Per-model context_length overrides (24 GB RX 7900 XTX, ROCm).
+#
+# LM Studio auto-calculates context from free VRAM after loading weights.
+# For models that fit fully on GPU (gemma, devstral, nemotron, lfm2),
+# auto works well.  For GLM and Qwen, auto gives only 4096 because
+# weights nearly fill VRAM — we force higher values, accepting that
+# some KV cache or layers will spill to CPU.
+#
+# Tested 2026-04-11: all forced values load and infer successfully.
 MODEL_CONFIGS = {
     "gemma-4": {
-        "context_length": 58368,
-        "note": "🏆 Best quality. ISWA dual-cache. Slow first prompt (~13 tok/s), needs warmup.",
+        "context_length": 58368,   # matches auto (31/31 layers on GPU)
     },
     "glm-4.7": {
-        "context_length": 65536,
-        "note": "Fastest reliable (55 tok/s). 47/48 layers on GPU.",
+        "context_length": 65536,   # auto=4096 too low; forced OK, ~61 tok/s
     },
     "devstral": {
-        "context_length": 61440,
-        "note": "Solid all-round. Strict Jinja role alternation.",
+        "context_length": 61440,   # auto=35914; forced gives more headroom
     },
     "qwen3.5": {
-        "context_length": 94208,
-        "note": "⚠️ 8/41 layers spill to CPU (4.3 GB). Slow.",
+        "context_length": 94208,   # auto=4096 too low; 8/41 layers on CPU
     },
     "nemotron": {
-        "context_length": 131072,
-        "note": "Tiny (4B). 131K sweet spot — 233K is slower with no benefit for short tasks.",
+        "context_length": 131072,  # auto=488K; 131K avoids KV overhead
     },
     "lfm2": {
-        "context_length": 114688,
-        "note": "❌ Broken multi-tool selection. Gets worse with more context.",
+        "context_length": 128000,  # model's max_context_length cap
     },
 }
 
@@ -81,8 +81,12 @@ def lms_get_models():
 
 
 def lms_load_model(model_id: str, context_length: int | None = None):
-    """Load a model with optional context_length; returns instance info."""
-    payload = {"model": model_id}
+    """Load a model with flash_attention + context_length; returns instance info."""
+    payload = {
+        "model": model_id,
+        "flash_attention": True,
+        "echo_load_config": True,
+    }
     ctx = context_length or _model_config(model_id).get("context_length")
     if ctx:
         payload["context_length"] = ctx
@@ -335,18 +339,16 @@ def run_matrix(models: list[str], prompts: dict[str, str], tools: list[dict],
             print(f"  ⚠ Model '{model_partial}' not found, skipping")
             continue
 
-        cfg = _model_config(model_id)
-
-        # Load model with optimal context_length
+        # Load model with optimal context_length + flash_attention
         print(f"\n{'='*60}")
         print(f"Loading: {model_id}")
-        if cfg.get("context_length"):
-            print(f"  context_length={cfg['context_length']}")
-        if cfg.get("note"):
-            print(f"  {cfg['note']}")
         load_resp = lms_load_model(model_id)
         instance_id = load_resp.get("instance_id", model_id)
-        print(f"  Loaded in {load_resp.get('load_time_seconds', '?')}s")
+        lcfg = load_resp.get("load_config", {})
+        print(f"  {load_resp.get('load_time_seconds', '?'):.1f}s  "
+              f"ctx={lcfg.get('context_length', '?')}  "
+              f"flash={lcfg.get('flash_attention', '?')}  "
+              f"kv_gpu={lcfg.get('offload_kv_cache_to_gpu', '?')}")
 
         # Warmup KV caches
         print("  Warming up...", end="", flush=True)
@@ -445,12 +447,9 @@ def main():
             key = m["key"]
             cfg = _model_config(key)
             ctx = cfg.get("context_length", "")
-            ctx_str = f"ctx={ctx}" if ctx else ""
-            note = cfg.get("note", "")
+            ctx_str = f"  ctx={ctx}" if ctx else ""
             print(f"  {key:50s}  {m.get('params_string','?'):10s}  "
-                  f"loaded={loaded}  {ctx_str}")
-            if note:
-                print(f"    {note}")
+                  f"loaded={loaded}{ctx_str}")
         return
 
     if args.list_tools:
@@ -513,13 +512,14 @@ def main():
             print(f"  {m['key']}")
         sys.exit(1)
 
-    cfg = _model_config(model_id)
     print(f"Loading {model_id}...")
-    if cfg.get("context_length"):
-        print(f"  context_length={cfg['context_length']}")
     load_resp = lms_load_model(model_id)
     instance_id = load_resp.get("instance_id", model_id)
-    print(f"  Loaded in {load_resp.get('load_time_seconds', '?')}s")
+    lcfg = load_resp.get("load_config", {})
+    print(f"  {load_resp.get('load_time_seconds', '?'):.1f}s  "
+          f"ctx={lcfg.get('context_length', '?')}  "
+          f"flash={lcfg.get('flash_attention', '?')}  "
+          f"kv_gpu={lcfg.get('offload_kv_cache_to_gpu', '?')}")
 
     # Warmup
     print("  Warming up...", end="", flush=True)
