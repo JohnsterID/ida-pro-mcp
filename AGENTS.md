@@ -76,13 +76,12 @@ Compute buffer with flash OFF vs ON (nemotron 131K ctx):
 |---|---|---|---|---|---|---|---|
 | gemma 58K | 31/31 | 16003 | 2040 | - | 533 | 18576 | 5984 ✅ |
 | glm 65K | 47/48 | 17063 | 3312 | 72 | 401 | 20776 | 3784 ✅ |
-| devstral 36K | 41/41 | 13302 | 5640 | - | 270 | 19212 | 5348 ✅ |
+| devstral 61K | 41/41 | 13302 | 9600 | - | 344 | 23246 | 1314 ✅ |
 | qwen 94K | 33/41 | 15871 | 1472 | 368 | 497 | 17840 | 6720 ✅ |
 | nemotron 131K | 43/43 | 2429 | 2048 | - | 407 | 4884 | 19676 ✅ |
 | lfm2 128K | 41/41 | 13745 | 2500 | - | 391 | 16636 | 7924 ✅ |
 
-Note: devstral at 61440 ctx uses 9600 MiB KV → only 1314 MiB free (risky).
-Auto 35914 is safer. All values in MiB.
+All values in MiB. Devstral at 61K is tightest (1314 free) but tested working.
 
 ### Other LM Studio Notes
 - Model unload requires `instance_id` (not `model`) field
@@ -147,7 +146,7 @@ strict role alternation; our test had invalid `user→tool→user` sequence.
 |---|---|---|---|
 | gemma-4-26b-a4b | 58368 | true (auto-enables) | 31/31 on GPU |
 | glm-4.7-flash | 65536 | true (auto-enables) | 47/48 on GPU |
-| devstral-small-2 | 35914 | true (must send) | 41/41; 61440 too tight |
+| devstral-small-2 | 61440 | true (must send) | 41/41; tight but tested |
 | nemotron-3-nano-4b | 131072 | true (must send) | 43/43 on GPU |
 | qwen3.5-35b-a3b | 94208 | true (must send) | 33/41; 8 layers on CPU |
 | lfm2-24b-a2b | 128000 | true (must send) | model cap |

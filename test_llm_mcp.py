@@ -48,7 +48,7 @@ DEFAULT_MAX_TOKENS = 4096
 # VRAM budget at forced values (all with flash_attention, from log):
 #   gemma  58K: 16003 wt + 2040 KV + 533 compute = 18576 (5984 free) ✅
 #   glm    65K: 17063 wt + 3384 KV + 401 compute = 20848 (3712 free) ✅
-#   devstr 36K: 13302 wt + 5640 KV + 270 compute = 19212 (5348 free) ✅
+#   devstr 61K: 13302 wt + 9600 KV + 344 compute = 23246 (1314 free) ✅
 #   qwen   94K: 15871 wt + 1840 KV + 497 compute = 18208 (6352 free) ✅
 #   nemo  131K:  2429 wt + 2048 KV + 407 compute =  4884 (19676 free) ✅
 #   lfm2  128K: 13745 wt + 2500 KV + 391 compute = 16636 (7924 free) ✅
@@ -60,7 +60,7 @@ MODEL_CONFIGS = {
         "context_length": 65536,   # auto=4096 too low; 47/48 layers, 72 MiB KV on CPU
     },
     "devstral": {
-        "context_length": 35914,   # auto value; 61440 works but only 1.3 GiB headroom
+        "context_length": 61440,   # auto=35914; 61440 tested OK, 1.3 GiB headroom
     },
     "qwen3.5": {
         "context_length": 94208,   # auto=4096 too low; 33/41 layers, 368 MiB KV on CPU
