@@ -39,22 +39,34 @@ DEFAULT_MAX_TOKENS = 4096
 # weights nearly fill VRAM — we force higher values, accepting that
 # some KV cache or layers will spill to CPU.
 #
-# Tested 2026-04-11: all forced values load and infer successfully.
+# flash_attention behavior (from 2026-04-11.1.log):
+#   gemma-4, glm-4.7: "auto" → auto-enabled by LM Studio (native FA support)
+#   nemotron:          "disabled" unless explicitly set — MUST send true
+#   devstral, lfm2, qwen3.5: "enabled" when sent
+# We always send flash_attention=true for consistency.
+#
+# VRAM budget at forced values (all with flash_attention, from log):
+#   gemma  58K: 16003 wt + 2040 KV + 533 compute = 18576 (5984 free) ✅
+#   glm    65K: 17063 wt + 3384 KV + 401 compute = 20848 (3712 free) ✅
+#   devstr 36K: 13302 wt + 5640 KV + 270 compute = 19212 (5348 free) ✅
+#   qwen   94K: 15871 wt + 1840 KV + 497 compute = 18208 (6352 free) ✅
+#   nemo  131K:  2429 wt + 2048 KV + 407 compute =  4884 (19676 free) ✅
+#   lfm2  128K: 13745 wt + 2500 KV + 391 compute = 16636 (7924 free) ✅
 MODEL_CONFIGS = {
     "gemma-4": {
-        "context_length": 58368,   # matches auto (31/31 layers on GPU)
+        "context_length": 58368,   # matches auto; 31/31 layers on GPU
     },
     "glm-4.7": {
-        "context_length": 65536,   # auto=4096 too low; forced OK, ~61 tok/s
+        "context_length": 65536,   # auto=4096 too low; 47/48 layers, 72 MiB KV on CPU
     },
     "devstral": {
-        "context_length": 61440,   # auto=35914; forced gives more headroom
+        "context_length": 35914,   # auto value; 61440 works but only 1.3 GiB headroom
     },
     "qwen3.5": {
-        "context_length": 94208,   # auto=4096 too low; 8/41 layers on CPU
+        "context_length": 94208,   # auto=4096 too low; 33/41 layers, 368 MiB KV on CPU
     },
     "nemotron": {
-        "context_length": 131072,  # auto=488K; 131K avoids KV overhead
+        "context_length": 131072,  # auto=488K wastes VRAM; 131K sufficient
     },
     "lfm2": {
         "context_length": 128000,  # model's max_context_length cap

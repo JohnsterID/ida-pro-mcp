@@ -58,15 +58,31 @@ eval_batch_size     — defaults 512
 ```
 `gpu_offload` (layer count) is NOT an API parameter — set in LM Studio UI.
 
-### LM Studio Auto Context vs Forced (24 GB RX 7900 XTX)
-| Model | Auto ctx | Forced ctx | Why |
+### flash_attention Behavior by Architecture (from 2026-04-11.1.log)
+| Model | Architecture | Default flash_attn | Notes |
 |---|---|---|---|
-| gemma-4 26B | 58368 | 58368 | Matches — fits fully on GPU |
-| glm-4.7 30B | 4096 | 65536 | Auto too low — weights fill VRAM |
-| devstral 24B | 35914 | 61440 | Forced gives more headroom |
-| qwen3.5 35B | 4096 | 94208 | Auto too low — 8/41 layers on CPU |
-| nemotron 4B | 488357 | 131072 | Auto wastes KV VRAM; 131K sufficient |
-| lfm2 24B | 128000 | 128000 | Model cap |
+| gemma-4 | gemma4 | auto → enabled | Native FA support, auto-enables |
+| glm-4.7 | deepseek2 | auto → enabled | Native FA support, auto-enables |
+| nemotron | nemotron_h | **disabled** | MUST send flash_attention=true |
+| devstral | mistral3 | needs explicit | enabled when sent |
+| lfm2 | lfm2moe | needs explicit | enabled when sent |
+| qwen3.5 | qwen35moe | needs explicit | enabled when sent |
+
+Compute buffer with flash OFF vs ON (nemotron 131K ctx):
+10523 MiB → 407 MiB (**26x reduction**). Always send flash_attention=true.
+
+### VRAM Budget (24 GB / 24560 MiB, all with flash_attention, from log)
+| Model | Layers | GPU Weights | KV GPU | KV CPU | Compute | Total GPU | Free |
+|---|---|---|---|---|---|---|---|
+| gemma 58K | 31/31 | 16003 | 2040 | - | 533 | 18576 | 5984 ✅ |
+| glm 65K | 47/48 | 17063 | 3312 | 72 | 401 | 20776 | 3784 ✅ |
+| devstral 36K | 41/41 | 13302 | 5640 | - | 270 | 19212 | 5348 ✅ |
+| qwen 94K | 33/41 | 15871 | 1472 | 368 | 497 | 17840 | 6720 ✅ |
+| nemotron 131K | 43/43 | 2429 | 2048 | - | 407 | 4884 | 19676 ✅ |
+| lfm2 128K | 41/41 | 13745 | 2500 | - | 391 | 16636 | 7924 ✅ |
+
+Note: devstral at 61440 ctx uses 9600 MiB KV → only 1314 MiB free (risky).
+Auto 35914 is safer. All values in MiB.
 
 ### Other LM Studio Notes
 - Model unload requires `instance_id` (not `model`) field
@@ -127,15 +143,16 @@ strict role alternation; our test had invalid `user→tool→user` sequence.
 
 ### Optimal LM Studio Settings
 
-| Model | GPU Offload | Context Length | Notes |
+| Model | Context | flash_attention | Notes |
 |---|---|---|---|
-| gemma-4-26b-a4b | 30 (max) | 58368 | Primary — best for OpenHands |
-| glm-4.7-flash | 47 (max) | 65536 | Speed alt — interactive use |
-| devstral-small-2 | max | 61440 | Solid coding focus |
-| nemotron-3-nano-4b | max | 131072 | Quick trivial tasks |
-| qwen3.5-35b-a3b | max | 94208 | Weights spill to CPU anyway |
+| gemma-4-26b-a4b | 58368 | true (auto-enables) | 31/31 on GPU |
+| glm-4.7-flash | 65536 | true (auto-enables) | 47/48 on GPU |
+| devstral-small-2 | 35914 | true (must send) | 41/41; 61440 too tight |
+| nemotron-3-nano-4b | 131072 | true (must send) | 43/43 on GPU |
+| qwen3.5-35b-a3b | 94208 | true (must send) | 33/41; 8 layers on CPU |
+| lfm2-24b-a2b | 128000 | true (must send) | model cap |
 
-All with: CPU Thread Pool = 7, Flash Attention = ON
+test_llm_mcp.py sends both flash_attention=true and context_length automatically.
 
 ### OpenHands Configuration
 
@@ -154,14 +171,3 @@ Base URL:      http://192.168.0.241:1234/v1
 API Key:       lmstudio
 ```
 ~61 tok/s (needs re-bench with flash_attention). Weak on autonomous error recovery.
-
-### VRAM Budget Reference (24 GB RX 7900 XTX)
-
-| Model | Weights on GPU | KV/token | Free for KV |
-|---|---|---|---|
-| GLM 4.7 Flash | 17063 MiB (47/48) | 100 KB | 7.0 GiB |
-| Gemma 4 26B | 16003 MiB (31/31) | 124 KB | 8.1 GiB |
-| Devstral 24B | 13302 MiB (all) | 164 KB | 10.7 GiB |
-| Qwen3.5 35B | 15871 MiB (33/41) ⚠️ | 82 KB | 8.2 GiB |
-| Nemotron 4B | 2429 MiB (all) | 86 KB | 21.3 GiB |
-| LFM2 24B | 13745 MiB (all) | 20 KB | 10.3 GiB |
