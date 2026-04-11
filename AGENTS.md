@@ -75,10 +75,10 @@ Compute buffer with flash OFF vs ON (nemotron 131K ctx):
 | Model | Layers | GPU Weights | KV GPU | KV CPU | Compute | Total GPU | Free |
 |---|---|---|---|---|---|---|---|
 | gemma 58K | 31/31 | 16003 | 2040 | - | 533 | 18576 | 5984 ✅ |
-| glm 65K | 47/48 | 17063 | 3312 | 72 | 401 | 20776 | 3784 ✅ |
+| glm 65K | 48/48 | 17114 | 3384 | - | 327 | 20824 | 3736 ✅ |
 | devstral 61K | 41/41 | 13302 | 9600 | - | 344 | 23246 | 1314 ✅ |
-| qwen 94K | 33/41 | 15871 | 1472 | 368 | 497 | 17840 | 6720 ✅ |
-| nemotron auto | 43/43 | 2429 | 7632 | - | 1454 | 11515 | 13045 ✅ |
+| qwen 94K | 41/41 | 19905 | 1840 | - | 493 | 22238 | 2322 ✅ |
+| nemotron auto | 43/43 | 2429 | 7632 | - | 1454 | 11514 | 13046 ✅ |
 | lfm2 128K | 41/41 | 13745 | 2500 | - | 391 | 16636 | 7924 ✅ |
 
 All values in MiB. After GPU offload tuning, auto context matches forced
@@ -146,10 +146,10 @@ strict role alternation; our test had invalid `user→tool→user` sequence.
 | Model | Context | flash_attention | Notes |
 |---|---|---|---|
 | gemma-4-26b-a4b | 58368 | true (auto-enables) | 31/31 on GPU |
-| glm-4.7-flash | 65536 | true (auto-enables) | 47/48 on GPU |
-| devstral-small-2 | 61440 | true (must send) | 41/41; tight but tested |
+| glm-4.7-flash | 65536 | true (auto-enables) | 48/48 on GPU |
+| devstral-small-2 | 61440 | true (must send) | 41/41 on GPU |
 | nemotron-3-nano-4b | auto (488K) | true (must send) | 43/43; no speed penalty |
-| qwen3.5-35b-a3b | 94208 | true (must send) | 33/41; 8 layers on CPU |
+| qwen3.5-35b-a3b | 94208 | true (must send) | 41/41; auto=4096 too low |
 | lfm2-24b-a2b | 128000 | true (must send) | model cap |
 
 test_llm_mcp.py sends both flash_attention=true and context_length automatically.

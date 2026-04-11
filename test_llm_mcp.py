@@ -45,25 +45,25 @@ DEFAULT_MAX_TOKENS = 4096
 #   devstral, lfm2, qwen3.5: "enabled" when sent
 # We always send flash_attention=true for consistency.
 #
-# VRAM budget at forced values (all with flash_attention, from log):
-#   gemma  58K: 16003 wt + 2040 KV + 533 compute = 18576 (5984 free) ✅
-#   glm    65K: 17063 wt + 3384 KV + 401 compute = 20848 (3712 free) ✅
-#   devstr 61K: 13302 wt + 9600 KV + 344 compute = 23246 (1314 free) ✅
-#   qwen   94K: 15871 wt + 1840 KV + 497 compute = 18208 (6352 free) ✅
-#   nemo  auto:   2429 wt + 7632 KV + 1454 compute = 11515 (13045 free) ✅
-#   lfm2  128K: 13745 wt + 2500 KV + 391 compute = 16636 (7924 free) ✅
+# VRAM budget (24560 MiB, flash_attention=true, from 2026-04-11.1.log):
+#   gemma  58K: 16003 wt + 2040 KV +  533 compute = 18576 (5984 free) ✅
+#   glm    65K: 17114 wt + 3384 KV +  327 compute = 20824 (3736 free) ✅ 48/48
+#   devstr 61K: 13302 wt + 9600 KV +  344 compute = 23246 (1314 free) ✅
+#   qwen   94K: 19905 wt + 1840 KV +  493 compute = 22238 (2322 free) ✅ 41/41
+#   nemo  auto:  2429 wt + 7632 KV + 1454 compute = 11514 (13046 free) ✅
+#   lfm2  128K: 13745 wt + 2500 KV +  391 compute = 16636 (7924 free) ✅
 MODEL_CONFIGS = {
     "gemma-4": {
         "context_length": 58368,   # matches auto; 31/31 layers on GPU
     },
     "glm-4.7": {
-        "context_length": 65536,   # auto=4096 too low; 47/48 layers, 72 MiB KV on CPU
+        "context_length": 65536,   # matches auto; 48/48 layers on GPU
     },
     "devstral": {
-        "context_length": 61440,   # auto=35914; 61440 tested OK, 1.3 GiB headroom
+        "context_length": 61440,   # matches auto; 41/41 layers on GPU
     },
     "qwen3.5": {
-        "context_length": 94208,   # auto=4096 too low; 33/41 layers, 368 MiB KV on CPU
+        "context_length": 94208,   # auto=4096 too low; 41/41 on GPU, 2.3 GiB free
     },
     "nemotron": {
         # auto=488K; no speed penalty with flash_attention (94 vs 100 tok/s)
